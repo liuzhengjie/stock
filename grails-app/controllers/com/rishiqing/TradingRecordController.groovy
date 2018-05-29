@@ -25,7 +25,7 @@ import static org.springframework.http.HttpStatus.*
 @Transactional(readOnly = true)
 class TradingRecordController {
 
-    static allowedMethods = [save: "POST", update: "PUT", delete: "DELETE"]
+//    static allowedMethods = [save: "POST", update: "PUT", delete: "DELETE"]
 
     def index(Integer max) {
 
@@ -39,7 +39,9 @@ class TradingRecordController {
      */
     def list () {
         //获取所有的交易记录
-        List<TradingRecord> list = TradingRecord.list()
+        List<TradingRecord> list = TradingRecord.createCriteria().list {
+            order("transactionDate", "desc")
+        }
         //获取当前股票单价
         String sharePrice = GlobalSystemOptions.getInstance().getByType('share_price') + ""
         //算出每笔交易在现在的总价值
@@ -93,7 +95,7 @@ class TradingRecordController {
         tradingRecord.sellUser = sellUser
         tradingRecord.buyUser = buyUser
         tradingRecord.transactionDate = transactionDate
-
+        String turnover = tradingRecord.sellShareNum * tradingRecord.tradingPrice.toDouble() + ""
         //对卖出人进行操作
         //卖出类型
         int sellType = tradingRecord.sellType
@@ -105,7 +107,7 @@ class TradingRecordController {
                     transactionDate : transactionDate, //交易时间
                     tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                     sharePrice: tradingRecord.sharePrice, //购买时股价
-                    turnover :  tradingRecord.turnover, //成交金额
+                    turnover :  turnover, //成交金额
                     remark :  tradingRecord.remark //备注信息
             )
             shareRecord.save(flush: true)
@@ -119,7 +121,7 @@ class TradingRecordController {
                     transactionDate : transactionDate, //交易时间
                     tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                     sharePrice: tradingRecord.sharePrice, //当前股价
-                    turnover :  tradingRecord.turnover, //成交金额
+                    turnover :  turnover, //成交金额
                     remark :  tradingRecord.remark //备注信息
             )
             optionsRecord.save flush:true
@@ -137,13 +139,14 @@ class TradingRecordController {
                     transactionDate : transactionDate, //交易时间
                     tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                     sharePrice: tradingRecord.sharePrice, //购买时股价
-                    turnover :  tradingRecord.turnover, //成交金额
+                    turnover :  "-" + turnover, //成交金额
                     remark :  tradingRecord.remark //备注信息
             )
             shareRecord.save(flush: true)
             tradingRecord.buyShareRecord = shareRecord
             tradingRecord.buyOptionsRecord = null
-        }else if(sellType == 2){ //买入的是期权
+
+        }else if(buyType == 2){ //买入的是期权
             OptionsRecord optionsRecord = new OptionsRecord(
                     user: buyUser, //买入人
                     buyShareNum : tradingRecord.buyShareNum, //买入数量
@@ -151,14 +154,14 @@ class TradingRecordController {
                     transactionDate : transactionDate, //交易时间
                     tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                     sharePrice: tradingRecord.sharePrice, //当前股价
-                    turnover :  tradingRecord.turnover, //成交金额
+                    turnover :  "-" + turnover, //成交金额
                     remark :  tradingRecord.remark //备注信息
             )
             optionsRecord.save flush:true
             tradingRecord.buyShareRecord = null
             tradingRecord.buyOptionsRecord = optionsRecord
         }
-
+        tradingRecord.turnover = turnover
         tradingRecord.save flush:true
         flash.message = '添加交易成功'
         redirect action: 'list'
@@ -180,12 +183,28 @@ class TradingRecordController {
     }
 
     /**
+     * 跳转到查看页面
+     * @param id
+     * @return
+     */
+    def show(Long id) {
+        //获取要编辑的信息
+        TradingRecord tradingRecord = TradingRecord.findById(id)
+        //用户列表
+        List<User> userList = User.findAllByIsDeleted(false)
+        //当前股价
+        def sharePrice = GlobalSystemOptions.getInstance().getByType('share_price')
+        render (view: 'show', model: [tradingRecord:tradingRecord, sharePrice:sharePrice, userList:userList])
+    }
+
+    /**
      * 修改交易信息
      * @param tradingRecord
      * @return
      */
     @Transactional
     def update(TradingRecord tradingRecord) {
+//        TradingRecord tradingRecord = TradingRecord.findById(params.id)
         if (tradingRecord == null) {
             transactionStatus.setRollbackOnly()
             notFound()
@@ -197,7 +216,7 @@ class TradingRecordController {
             respond tradingRecord.errors, view:'edit'
             return
         }
-
+        String turnover = tradingRecord.sellShareNum * tradingRecord.tradingPrice.toDouble() + ""
         //通过id获取数据库中的交易信息
         TradingRecord tradingRecord_db = TradingRecord.get(tradingRecord.id)
 
@@ -235,7 +254,7 @@ class TradingRecordController {
                         transactionDate : transactionDate, //交易时间
                         tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                         sharePrice: tradingRecord.sharePrice, //购买时股价
-                        turnover :  tradingRecord.turnover, //成交金额
+                        turnover :  turnover, //成交金额
                         remark :  tradingRecord.remark //备注信息
                 )
                 shareRecord.save(flush: true)
@@ -252,14 +271,12 @@ class TradingRecordController {
                     sellShareRecord_db.transactionDate = transactionDate
                     sellShareRecord_db.tradingPrice = tradingRecord.tradingPrice
                     sellShareRecord_db.sharePrice = tradingRecord.sharePrice
-                    sellShareRecord_db.turnover = tradingRecord.turnover
+                    sellShareRecord_db.turnover = turnover
                     sellShareRecord_db.remark = tradingRecord.remark
                     sellShareRecord_db.save(flush: true)
                     tradingRecord_db.sellShareRecord = sellShareRecord_db
                     tradingRecord_db.sellOptionsRecord = null
                 }else{ //不是同一个人
-                    //删除原来的交易信息
-                    sellShareRecord_db.delete(flush: true)
                     //创建新的交易信息
                     ShareRecord shareRecord = new ShareRecord(
                             user: sellUser, //卖出人
@@ -268,12 +285,14 @@ class TradingRecordController {
                             transactionDate : transactionDate, //交易时间
                             tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                             sharePrice: tradingRecord.sharePrice, //购买时股价
-                            turnover :  tradingRecord.turnover, //成交金额
+                            turnover :  turnover, //成交金额
                             remark :  tradingRecord.remark //备注信息
                     )
                     shareRecord.save(flush: true)
                     tradingRecord_db.sellShareRecord = shareRecord
                     tradingRecord_db.sellOptionsRecord = null
+                    //删除原来的交易信息
+                    sellShareRecord_db.delete(flush: true)
                 }
             }
         }else if(sellType == 2){ //卖出的是期权
@@ -285,7 +304,7 @@ class TradingRecordController {
                         transactionDate : transactionDate, //交易时间
                         tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                         sharePrice: tradingRecord.sharePrice, //购买时股价
-                        turnover :  tradingRecord.turnover, //成交金额
+                        turnover :  turnover, //成交金额
                         remark :  tradingRecord.remark //备注信息
                 )
                 optionsRecord.save(flush: true)
@@ -301,14 +320,12 @@ class TradingRecordController {
                     sellOptionsRecord_db.transactionDate = transactionDate
                     sellOptionsRecord_db.tradingPrice = tradingRecord.tradingPrice
                     sellOptionsRecord_db.sharePrice = tradingRecord.sharePrice
-                    sellOptionsRecord_db.turnover = tradingRecord.turnover
+                    sellOptionsRecord_db.turnover = turnover
                     sellOptionsRecord_db.remark = tradingRecord.remark
                     sellOptionsRecord_db.save(flush: true)
                     tradingRecord_db.sellShareRecord = null
                     tradingRecord_db.sellOptionsRecord = sellOptionsRecord_db
                 }else{ //不是同一个人
-                    //删除原来的交易信息
-                    sellOptionsRecord_db.delete(flush: true)
                     //创建新的交易信息
                     OptionsRecord optionsRecord = new OptionsRecord(
                             user: sellUser, //卖出人
@@ -317,12 +334,14 @@ class TradingRecordController {
                             transactionDate : transactionDate, //交易时间
                             tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                             sharePrice: tradingRecord.sharePrice, //购买时股价
-                            turnover :  tradingRecord.turnover, //成交金额
+                            turnover :  turnover, //成交金额
                             remark :  tradingRecord.remark //备注信息
                     )
                     optionsRecord.save(flush: true)
                     tradingRecord_db.sellShareRecord = null
                     tradingRecord_db.sellOptionsRecord = optionsRecord
+                    //删除原来的交易信息
+                    sellOptionsRecord_db.delete(flush: true)
                 }
             }
         }
@@ -338,7 +357,7 @@ class TradingRecordController {
                         transactionDate : transactionDate, //交易时间
                         tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                         sharePrice: tradingRecord.sharePrice, //购买时股价
-                        turnover :  tradingRecord.turnover, //成交金额
+                        turnover :  "-" + turnover, //成交金额
                         remark :  tradingRecord.remark //备注信息
                 )
                 shareRecord.save(flush: true)
@@ -356,14 +375,12 @@ class TradingRecordController {
                     buyShareRecord_db.transactionDate = transactionDate
                     buyShareRecord_db.tradingPrice = tradingRecord.tradingPrice
                     buyShareRecord_db.sharePrice = tradingRecord.sharePrice
-                    buyShareRecord_db.turnover = tradingRecord.turnover
+                    buyShareRecord_db.turnover = "-" + turnover
                     buyShareRecord_db.remark = tradingRecord.remark
                     buyShareRecord_db.save(flush: true)
                     tradingRecord_db.buyShareRecord = buyShareRecord_db
                     tradingRecord_db.buyOptionsRecord = null
                 }else{ //不是同一个人
-                    //删除原来的交易信息
-                    buyShareRecord_db.delete(flush: true)
                     //创建新的交易信息
                     ShareRecord shareRecord = new ShareRecord(
                             user: buyUser, //买入人
@@ -372,15 +389,17 @@ class TradingRecordController {
                             transactionDate : transactionDate, //交易时间
                             tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                             sharePrice: tradingRecord.sharePrice, //购买时股价
-                            turnover :  tradingRecord.turnover, //成交金额
+                            turnover :  "-" + turnover, //成交金额
                             remark :  tradingRecord.remark //备注信息
                     )
                     shareRecord.save(flush: true)
                     tradingRecord_db.buyShareRecord = shareRecord
                     tradingRecord_db.buyOptionsRecord = null
+                    //删除原来的交易信息
+                    buyShareRecord_db.delete(flush: true)
                 }
             }
-        }else if(sellType == 2){ //买入的是期权
+        }else if(buyType == 2){ //买入的是期权
             if(!buyOptionsRecord_db){ //原买入的期权信息为空
                 OptionsRecord optionsRecord = new OptionsRecord(
                         user: buyUser, //买入人
@@ -389,7 +408,7 @@ class TradingRecordController {
                         transactionDate : transactionDate, //交易时间
                         tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                         sharePrice: tradingRecord.sharePrice, //购买时股价
-                        turnover :  tradingRecord.turnover, //成交金额
+                        turnover :  "-" + turnover, //成交金额
                         remark :  tradingRecord.remark //备注信息
                 )
                 optionsRecord.save(flush: true)
@@ -407,14 +426,12 @@ class TradingRecordController {
                     buyOptionsRecord_db.transactionDate = transactionDate
                     buyOptionsRecord_db.tradingPrice = tradingRecord.tradingPrice
                     buyOptionsRecord_db.sharePrice = tradingRecord.sharePrice
-                    buyOptionsRecord_db.turnover = tradingRecord.turnover
+                    buyOptionsRecord_db.turnover = "-" + turnover
                     buyOptionsRecord_db.remark = tradingRecord.remark
                     buyOptionsRecord_db.save(flush: true)
                     tradingRecord_db.buyShareRecord = null
                     tradingRecord_db.buyOptionsRecord = buyOptionsRecord_db
                 }else{ //不是同一个人
-                    //删除原来的交易信息
-                    buyOptionsRecord_db.delete(flush: true)
                     //创建新的交易信息
                     OptionsRecord optionsRecord = new OptionsRecord(
                             user: buyUser, //买入人
@@ -423,33 +440,69 @@ class TradingRecordController {
                             transactionDate : transactionDate, //交易时间
                             tradingPrice :  tradingRecord.tradingPrice, //买卖单价
                             sharePrice: tradingRecord.sharePrice, //购买时股价
-                            turnover :  tradingRecord.turnover, //成交金额
+                            turnover :  "-" + turnover, //成交金额
                             remark :  tradingRecord.remark //备注信息
                     )
                     optionsRecord.save(flush: true)
                     tradingRecord_db.buyShareRecord = null
                     tradingRecord_db.buyOptionsRecord = optionsRecord
+                    //删除原来的交易信息
+                    buyOptionsRecord_db.delete(flush: true)
                 }
             }
         }
 
+        tradingRecord_db.turnover = turnover
+        tradingRecord_db.transactionDate = transactionDate
+        tradingRecord_db.buyShareNum = tradingRecord.buyShareNum
+        tradingRecord_db.sellShareNum = tradingRecord.sellShareNum
+        tradingRecord_db.buyType = tradingRecord.buyType
+        tradingRecord_db.sellType = tradingRecord.sellType
+        tradingRecord_db.tradingPrice = tradingRecord.tradingPrice
+        tradingRecord_db.sharePrice = GlobalSystemOptions.getInstance().getByType('share_price') + ""
+        tradingRecord_db.remark = tradingRecord.remark
+        tradingRecord_db.sellUser = sellUser
+        tradingRecord_db.buyUser = buyUser
+
+        tradingRecord_db.save(flush:true)
         flash.message = '修改交易成功'
         redirect action: 'list'
     }
 
     @Transactional
     def delete(TradingRecord tradingRecord) {
-        println('--------------------')
         if (tradingRecord == null) {
             transactionStatus.setRollbackOnly()
             notFound()
             return
         }
+        ShareRecord ss = tradingRecord.sellShareRecord
+        OptionsRecord so = tradingRecord.sellOptionsRecord
+        ShareRecord bs = tradingRecord.buyShareRecord
+        OptionsRecord bo = tradingRecord.buyOptionsRecord
+        if(ss){
+            ss.delete(flush: true)
+        }
+        if(so){
+            so.delete(flush: true)
+        }
+        if(bs){
+            bs.delete(flush: true)
+        }
+        if(bo){
+            bo.delete(flush: true)
+        }
 
         tradingRecord.delete flush:true
-
         flash.message = '删除交易记录成功'
-        redirect action: 'index',  params: [tradingRecord: tradingRecord]
+        request.withFormat {
+            form multipartForm {
+//                flash.message = message(code: 'default.deleted.message', args: [message(code: 'tradingRecord.label', default: 'TradingRecord'), tradingRecord.id])
+                /* redirect action:"index", method:"GET"*/
+                redirect action:"list", method:"GET"
+            }
+            '*'{ render status: NO_CONTENT }
+        }
     }
 
 }
